@@ -4,6 +4,7 @@
  */
 
 import { Buffer } from 'https://cdn.jsdelivr.net/npm/buffer@6.0.3/+esm';
+window.Buffer = Buffer;
 
 (function(global) {
     'use strict';
