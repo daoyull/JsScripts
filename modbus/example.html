@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modbus PDU Browser Example</title>
+</head>
+<body>
+    <h1>Modbus PDU Library - Browser Test</h1>
+    
+    <div id="output"></div>
+    
+    <script>
+        function log(message) {
+            document.getElementById('output').innerHTML += '<p>' + message + '</p>';
+        }
+    </script>
+    
+    <script type="module">
+        // Import the self-contained Modbus module via jsdelivr CDN
+        import Modbus from 'https://cdn.jsdelivr.net/gh/daoyull/JsScripts@main/modbus/modbus-pdu.js';
+       
+        
+        // Test suite
+        var testResults = { passed: 0, failed: 0, total: 0 };
+        
+        function runTest(name, testFn) {
+            testResults.total++;
+            try {
+                testFn();
+                testResults.passed++;
+                log('✅ ' + name);
+            } catch (error) {
+                testResults.failed++;
+                log('❌ ' + name + ': ' + error.message);
+                console.error(error);
+            }
+        }
+        
+        function assertEqual(actual, expected, message) {
+            // Deep comparison that ignores property order
+            function deepEqual(a, b) {
+                if (a === b) return true;
+                if (a == null || b == null) return false;
+                if (typeof a !== typeof b) return false;
+                if (typeof a !== 'object') return false;
+                
+                var keysA = Object.keys(a);
+                var keysB = Object.keys(b);
+                if (keysA.length !== keysB.length) return false;
+                
+                for (var i = 0; i < keysA.length; i++) {
+                    var key = keysA[i];
+                    if (!keysB.includes(key)) return false;
+                    if (!deepEqual(a[key], b[key])) return false;
+                }
+                return true;
+            }
+            
+            if (!deepEqual(actual, expected)) {
+                throw new Error(message || 'Expected ' + JSON.stringify(expected) + ' but got ' + JSON.stringify(actual));
+            }
+        }
+        
+        function assertArrayEqual(actual, expected, message) {
+            if (actual.length !== expected.length) {
+                throw new Error(message || 'Array lengths differ: expected ' + expected.length + ' but got ' + actual.length);
+            }
+            for (var i = 0; i < actual.length; i++) {
+                if (actual[i] !== expected[i]) {
+                    throw new Error(message || 'Arrays differ at index ' + i + ': expected ' + expected[i] + ' but got ' + actual[i]);
+                }
+            }
+        }
+        
+        // Make Buffer available from the imported module
+        window.Buffer = Buffer;
+        
+        log('Running Modbus PDU Test Suite...');
+        
+        // Parser tests
+        runTest('Generic parser - Request parsing', function() {
+            var result = Modbus.Request(Buffer.from([0x01, 0x00, 0x0a, 0x00, 0x40]));
+            assertEqual(result, { code: "ReadCoils", address: 10, quantity: 64 });
+        });
+        
+        runTest('Generic parser - Response parsing', function() {
+            var result = Modbus.Response(Buffer.from([0x81, 0x01]));
+            assertEqual(result, { code: "ReadCoils", exception: "IllegalFunction" });
+        });
+        
+        // ReadCoils tests
+        runTest('ReadCoils - Request build/parse', function() {
+            var address = 13, quantity = 20;
+            var request = Modbus.ReadCoils.Request.build(address, quantity);
+            var parsed = Modbus.ReadCoils.Request.parse(request);
+            assertEqual(parsed, { address: address, quantity: quantity });
+        });
+        
+        runTest('ReadCoils - Response build/parse', function() {
+            var bits = [1, 0, 1, 1, 0, 1, 0, 1];
+            var response = Modbus.ReadCoils.Response.build(bits);
+            var parsed = Modbus.ReadCoils.Response.parse(response);
+            assertArrayEqual(parsed.slice(0, bits.length), bits);
+        });
+        
+        // WriteSingleCoil tests
+        runTest('WriteSingleCoil - Request build/parse', function() {
+            var address = 25, value = true;
+            var request = Modbus.WriteSingleCoil.Request.build(address, value);
+            var parsed = Modbus.WriteSingleCoil.Request.parse(request);
+            assertEqual(parsed, { address: address, value: value });
+        });
+        
+        runTest('WriteSingleCoil - Response build/parse', function() {
+            var address = 25, value = false;
+            var response = Modbus.WriteSingleCoil.Response.build(address, value);
+            var parsed = Modbus.WriteSingleCoil.Response.parse(response);
+            assertEqual(parsed, { address: address, value: value });
+        });
+        
+        // Exception tests
+        runTest('Exception - ReadCoils IllegalFunction', function() {
+            var exception = Modbus.ReadCoils.Exception.build(Modbus.Exception.IllegalFunction);
+            assertArrayEqual(Array.from(exception), [0x81, 0x01]);
+        });
+        
+        runTest('Exception - WriteSingleCoil ServerDeviceFailure', function() {
+            var exception = Modbus.WriteSingleCoil.Exception.build(Modbus.Exception.ServerDeviceFailure);
+            assertArrayEqual(Array.from(exception), [0x85, 0x04]);
+        });
+        
+        runTest('Exception - Parse exception response', function() {
+            var result = Modbus.Exception.parse(Buffer.from([0x81, 0x01]));
+            assertEqual(result, { code: "ReadCoils", exception: "IllegalFunction" });
+        });
+        
+        runTest('Exception - Error creation by name', function() {
+            var err = Modbus.Exception.error("MemoryParityError");
+            assertEqual(err.code, 0x08);
+            assertEqual(err.message, "MemoryParityError");
+        });
+        
+        // Helpers tests
+        runTest('Helpers - bitsToBuffer', function() {
+            var bits = [1, 1, 0, 1];
+            var buffer = Modbus.Helpers.bitsToBuffer(bits);
+            assertArrayEqual(Array.from(buffer), [0x01, 0x0B]);
+        });
+        
+        runTest('Helpers - bufferToBits', function() {
+            var buffer = Buffer.from([0x01, 0x0B]);
+            var bits = Modbus.Helpers.bufferToBits(buffer);
+            assertArrayEqual(bits, [1, 1, 0, 1, 0, 0, 0, 0]);
+        });
+        
+        runTest('Helpers - blocksToBuffer', function() {
+            var blocks = [Buffer.from([0x01, 0x02]), Buffer.from([0x03, 0x04])];
+            var buffer = Modbus.Helpers.blocksToBuffer(blocks);
+            assertArrayEqual(Array.from(buffer), [0x04, 0x01, 0x02, 0x03, 0x04]);
+        });
+        
+        runTest('Helpers - bufferToBlocks', function() {
+            var buffer = Buffer.from([0x04, 0x01, 0x02, 0x03, 0x04]);
+            var blocks = Modbus.Helpers.bufferToBlocks(buffer);
+            assertEqual(blocks.length, 2);
+            assertArrayEqual(Array.from(blocks[0]), [0x01, 0x02]);
+            assertArrayEqual(Array.from(blocks[1]), [0x03, 0x04]);
+        });
+        
+        // Package test
+        runTest('Package - Function code packaging', function() {
+            var data = Buffer.from([0x00, 0x0a, 0x00, 0x40]);
+            var result = Modbus.Package(0x01, data);
+            assertArrayEqual(Array.from(result), [0x01, 0x00, 0x0a, 0x00, 0x40]);
+        });
+        
+        // Summary
+        log('');
+        log('📊 Test Results:');
+        log('Total: ' + testResults.total);
+        log('Passed: ' + testResults.passed);
+        log('Failed: ' + testResults.failed);
+        
+        if (testResults.failed === 0) {
+            log('🎉 All tests passed!');
+        } else {
+            log('⚠️ Some tests failed. Check console for details.');
+        }
+    </script>
+</body>
+</html>
